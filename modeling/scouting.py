@@ -227,10 +227,7 @@ features = [
     'ppg_pct','rpg_pct','apg_pct','spg_pct','bpg_pct','tov_pct','usg_pct',
     'ortg_pct','efg_pct','ts_pct','obpm_pct','dbpm_pct','bpm_pct',
     'porpag_pct','dporpag_pct','adj_oe_pct','drtg_pct','adj_de_pct',
-    'HGT_pct','WGT_pct','BMI_pct','BF_pct','WNGSPN_pct','STNDRCH_pct',
-    'HANDL_pct','HANDW_pct','STNDVERT_pct','LPVERT_pct','LANE_pct','SHUTTLE_pct',
-    'SPRINT_pct','BENCH_pct','PAN_pct','PBHGT_pct','PDHGT_pct',
-    'fr','picktier','power_conf','pos_grouped'
+    'fr','picktier','power_conf'
 ]
 
 scouting_df_final['VORP/Yr'] = scouting_df_final['VORP/Yr'].replace('#DIV/0!', np.nan)
@@ -238,7 +235,6 @@ scouting_df_final['VORP/Yr'] = pd.to_numeric(scouting_df_final['VORP/Yr'], error
 scouting_df_final = scouting_df_final.dropna(subset=['VORP/Yr'])
 
 X = scouting_df_final[features].copy()
-X = pd.get_dummies(X, columns=['pos_grouped'], drop_first=True)
 
 y = scouting_df_final['VORP/Yr']
 X = X.fillna(X.median())
@@ -467,5 +463,149 @@ load_dir = r"C:\Users\natha\Downloads\nbadraft25"
 ensemble = joblib.load(os.path.join(load_dir, 'vorp_ensemble_model.pkl'))
 feature_cols = joblib.load(os.path.join(load_dir, 'vorp_model_features.pkl'))
 #------------------------------------------------------------------------------
-
 """
+
+#------------------------------------------------------------------------------
+#-------------------------- 2025 Draft Players --------------------------------
+#------------------------------------------------------------------------------
+
+draft2025 = pd.read_csv("C:/Users/natha/Downloads/nbadraft25/2025_cbb_player_stats.csv")
+players25 = pd.read_csv("C:/Users/natha/Downloads/nbadraft25/25class - Sheet2.csv")
+print(draft2025.info())
+print(players25['player'])
+players25['player']
+
+projected_picks = pd.DataFrame({
+    'player': [
+        'Jase Richardson', 'Kasparas Jakucionis', 'Asa Newell',
+        'Tre Johnson', 'Nique Clifford', 'Khaman Maluach',
+        'Walter Clayton Jr.', 'John Tonje', 'Eric Dixon', 'Ryan Kalkbrenner'
+    ],
+    'pick': [11, 9, 15, 6, 20, 7, 26, 45, 52, 31]
+})
+
+def pick_to_tier(pk):
+    if pd.isna(pk):
+        return 6
+    elif pk == 1:
+        return 0
+    elif pk <= 5:
+        return 1
+    elif pk <= 14:
+        return 2
+    elif pk <= 30:
+        return 3
+    elif pk <= 45:
+        return 4
+    elif pk <= 60:
+        return 5
+    else:
+        return 6
+
+projected_picks['picktier'] = projected_picks['pick'].apply(pick_to_tier)
+projected_picks['player'] = projected_picks['player'].str.lower().str.replace(r'[^a-z\s]', '', regex=True).str.strip()
+draft2025['player'] = draft2025['player'].str.lower().str.replace(r'[^a-z\s]', '', regex=True).str.strip()
+draft2025 = pd.merge(draft2025, projected_picks, on='player', how='inner')
+draft2025['power_conf'] = draft2025['conf'].apply(
+    lambda x: 1 if x in power_confs else 0
+)
+def group_position(pos):
+    pos = pos.lower()
+    if pos in ['pure pg', 'scoring pg','combo g']:
+        return 'g'
+    elif pos in ['wing f', 'wing g']:
+        return 'wing'
+    elif pos in ['pf/c', 'c']:
+        return 'big'
+    elif pos == 'stretch 4':
+        return 'stretch'
+    else:
+        return 'other'
+
+draft2025['pos_grouped'] = draft2025['pos'].apply(group_position)
+stat_cols = [
+    'ppg', 'rpg', 'apg', 'spg', 'bpg', 'tov', 'usg', 'ortg', 'efg', 'ts',
+    'obpm', 'dbpm', 'bpm', 'porpag', 'dporpag', 'adj_oe', 'drtg', 'adj_de'
+]
+
+draft2025['fr'] = draft2025['exp'].astype(str).str.strip().eq('Fr').astype(int)
+draft2025['pos_fr_group'] = draft2025['pos_grouped'] + '_Y' + draft2025['fr'].astype(str)
+
+mergedplus25 = pd.concat([merged, draft2025])
+percentiles = mergedplus25.groupby('pos_grouped', group_keys=False)[stat_cols].rank(pct=True) * 100
+percentiles.columns = [f"{col}_pct" for col in percentiles.columns]
+
+mergedplus25_final = pd.concat([mergedplus25.reset_index(drop=True), percentiles.reset_index(drop=True)], axis=1)
+
+draft25_eval = mergedplus25_final[mergedplus25_final['year'] == 2025]
+features = [
+    'ppg_pct','rpg_pct','apg_pct','spg_pct','bpg_pct','tov_pct','usg_pct',
+    'ortg_pct','efg_pct','ts_pct','obpm_pct','dbpm_pct','bpm_pct',
+    'porpag_pct','dporpag_pct','adj_oe_pct','drtg_pct','adj_de_pct','fr',
+    'picktier','power_conf']
+
+X_2025 = draft25_eval[features].copy()
+X_2025 = X_2025.fillna(X_2025.median())
+
+vorp_preds = ensemble.predict(X_2025)
+X = scouting_df_final[features].copy()
+y = scouting_df_final['VORP/Yr']
+
+X = X.fillna(X.median())
+y = y.fillna(y.median())
+
+final_model = CatBoostRegressor(iterations=1000, random_seed=42, verbose=False)
+final_model.fit(X, y)
+X_2025 = draft25_eval[features].copy()
+X_2025 = X_2025.fillna(X_2025.median())
+
+draft25_eval['VORP_proj'] = final_model.predict(X_2025)
+#-------------------------------------------------------------
+stat_cols = [
+    'ppg', 'rpg', 'apg', 'spg', 'bpg', 'tov', 'usg',
+    'ortg', 'efg', 'ts', 'obpm', 'dbpm', 'bpm',
+    'porpag', 'dporpag', 'adj_oe', 'drtg', 'adj_de'
+]
+
+percentile_cols = [col + '_pct' for col in stat_cols]
+
+id_cols = ['player', 'pos', 'exp', 'conf', 'team']
+model_cols = ['picktier', 'VORP_proj']
+keep_cols = id_cols + stat_cols + percentile_cols + model_cols
+
+draft25_eval_small = draft25_eval[keep_cols].copy()
+player_vorp_df = merged[['player', 'pos', 'VORP/Yr']].copy()
+
+merged['VORP/Yr'] = pd.to_numeric(merged['VORP/Yr'], errors='coerce')
+
+merged_avg = (
+    merged.sort_values('year') 
+    .groupby(['player', 'pos'], as_index=False)
+    .agg({'VORP/Yr': 'mean'})  
+)
+
+comp_rows = []
+
+for _, row in draft25_eval_small.iterrows():
+    name = row['player']
+    pos = row['pos']
+    vorp_proj = row['VORP_proj']
+    
+    pool = merged_avg[(merged_avg['pos'] == pos) & (merged_avg['player'] != name)].copy()
+    pool = pool.dropna(subset=['VORP/Yr'])
+
+    pool['vorp_diff'] = pool['VORP/Yr'] - vorp_proj
+    pool['abs_diff'] = pool['vorp_diff'].abs()
+    
+    below = pool[pool['vorp_diff'] < 0].nsmallest(2, 'abs_diff')
+    above = pool[pool['vorp_diff'] > 0].nsmallest(2, 'abs_diff')
+    
+    comps = pd.concat([below, above])
+    comps['prospect'] = name
+    comps['prospect_vorp_proj'] = vorp_proj
+
+    comp_rows.append(comps[['prospect', 'prospect_vorp_proj', 'player', 'pos', 'VORP/Yr', 'vorp_diff']])
+
+player_comps_df = pd.concat(comp_rows).reset_index(drop=True)
+player_comps_df.to_csv("C:/Users/natha/Downloads/nbadraft25/comps.csv")
+draft25_eval_small.to_csv("C:/Users/natha/Downloads/nbadraft25/drafteval2025.csv")
